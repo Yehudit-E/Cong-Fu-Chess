@@ -10,14 +10,12 @@ from Bus.EventBus import EventBus
 from Game import Game
 from ScoreBoard import ScoreBoard
 from CommandLog import CommandLog
+from GameUI import GameUI
 
-event_bus = EventBus()
-scoreboard = ScoreBoard()
-commandLog = CommandLog()
+game_ui = GameUI()
 
 # רישום לאירועים
-event_bus.subscribe("piece_captured", scoreboard.handle_capture)
-event_bus.subscribe("piece_command", commandLog.handle_command)
+
 
 if __name__ == "__main__":
     # paths
@@ -35,6 +33,6 @@ if __name__ == "__main__":
         img=Img().read("../board.png", size=(640, 640))
     )
 
-    game = Game(board, pieces_root, placement_csv, event_bus)
+    game = Game(board, pieces_root, placement_csv, game_ui)
     game.run()
 

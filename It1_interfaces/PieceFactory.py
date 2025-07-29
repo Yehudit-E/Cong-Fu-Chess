@@ -7,13 +7,12 @@ from Moves import Moves
 from PhysicsFactory import PhysicsFactory
 from Piece import Piece
 from State import State
-from Bus.EventBus import EventBus
 
 class PieceFactory:
-    def __init__(self, board: Board, pieces_root: pathlib.Path, event_bus: EventBus):
+    def __init__(self, board: Board, pieces_root: pathlib.Path):
         self.board = board
         self.pieces_root = pieces_root
-        self._physics_factory = PhysicsFactory(board, event_bus)
+        self._physics_factory = PhysicsFactory(board)
         self._graphics_factory = GraphicsFactory(board)
         self._templates: Dict[str, Piece] = {}
         self.counter = {} 

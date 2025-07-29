@@ -6,7 +6,7 @@ from typing import Dict, Optional, Tuple
 import cv2
 
 class Piece:
-    nextCode = 0
+
     def __init__(self, piece_id: str, init_state: State , start_ms: int = 0):
         self._id = piece_id
         self._state = init_state

@@ -34,10 +34,22 @@ class Board:
         Converts algebraic notation (e.g., "a1") to board coordinates.
         Example: "a1" -> (7, 0) if (0,0) is top-left
         """
-        print(notation)
+        if len(notation) != 2:
+            raise ValueError(f"Invalid algebric notation length: '{notation}'")
+        col_char = notation[0].lower()
+        row_char = notation[1]
+        if not ('a' <= col_char <= 'h'):
+            raise ValueError(f"Invalid column character: '{col_char}'")
+        if not row_char.isdigit():
+            raise ValueError(f"Row is not a digit: '{row_char}'")
+        row_num = int(row_char)
+        if not (1 <= row_num <= 8):
+            raise ValueError(f"Row number out of bounds: {row_num}")
         col = ord(notation[0].lower()) - ord('a')
         row = 8 - int(notation[1])  # Assuming board is 8x8
         return row, col
+
+
     def world_to_cell(self, pos: Tuple[float, float]) -> Tuple[int, int]:
         x, y = pos
         col = int(x // self.cell_W_pix)

@@ -1,6 +1,9 @@
 import pytest
 from pathlib import Path
 import json
+import sys
+import os
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from Board import Board
 from Piece import Piece
 from State import State
@@ -14,7 +17,10 @@ from Graphics import Graphics
 
 @pytest.fixture
 def board():
-    return Board(64, 64, 1, 1, 8, 8, img=None)
+    from img import Img
+    # יצירת img ריק למטרות בדיקה
+    img = Img()
+    return Board(64, 64, 1, 1, 8, 8, img=img)
 
 @pytest.fixture
 def physics_factory(board):
@@ -23,12 +29,17 @@ def physics_factory(board):
 @pytest.fixture
 def graphics(board):
     # גרפיקה קיימת – משתמשים בספרייטים האמיתיים של QW
-    sprites_dir = Path("../../pieces/QW/states/jump/sprites")
+    # שימוש בנתיב מוחלט
+    current_dir = Path(__file__).parent.parent
+    sprites_dir = current_dir / ".." / "pieces" / "QW" / "states" / "jump" / "sprites"
     return Graphics(sprites_dir, board)
 
 @pytest.fixture
 def base_piece(board, graphics):
-    moves = Moves(Path("../../pieces/QW/moves.txt"), (board.H_cells, board.W_cells))
+    # שימוש בנתיב מוחלט
+    current_dir = Path(__file__).parent.parent
+    moves_path = current_dir / ".." / "pieces" / "QW" / "moves.txt"
+    moves = Moves(moves_path, (board.H_cells, board.W_cells))
     physics = IdlePhysics((0, 0), board)
     state = State(moves, graphics, physics)
     return Piece("QW", state)
@@ -36,7 +47,9 @@ def base_piece(board, graphics):
 @pytest.fixture
 def piece_factory(board):
     # ─── ARRANGE: משתמשים ישירות בתיקיות האמיתיות של QW ─────────────
-    pieces_root = Path("../../pieces")
+    # שימוש בנתיב מוחלט
+    current_dir = Path(__file__).parent.parent
+    pieces_root = current_dir / ".." / "pieces"
     return PieceFactory(board, pieces_root)
 
 # ────────────────────────────── Tests – Piece ─────────────────────────
@@ -80,7 +93,9 @@ def test_WhenCreatePieceCalled_ThenTemplateReusedAndCloned(piece_factory):
     assert isinstance(piece1, Piece)
     assert isinstance(piece2, Piece)
     assert piece1 is not piece2
-    assert piece1.get_id() == "QW"
-    assert piece2.get_id() == "QW"
+    # PieceFactory מוסיפה מספר סידורי לכל כלי
+    assert piece1.get_id().startswith("QW")
+    assert piece2.get_id().startswith("QW")
+    assert piece1.get_id() != piece2.get_id()  # כל כלי מקבל ID ייחודי
     assert piece1._state._physics.start_cell == cell1
     assert piece2._state._physics.start_cell == cell2

@@ -18,3 +18,5 @@ class EventBus:
         event = Event(event_name, data)
         for handler in self.subscribers.get(event_name, []):
             handler(event)
+
+event_bus = EventBus()
