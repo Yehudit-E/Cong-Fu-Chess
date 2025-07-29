@@ -10,9 +10,9 @@ from Bus.EventBus import EventBus
 from Game import Game
 from ScoreBoard import ScoreBoard
 from CommandLog import CommandLog
-from GameUI import GameUI
+# from GameUI import GameUI
 
-game_ui = GameUI()
+# game_ui = GameUI()
 
 # רישום לאירועים
 
@@ -33,6 +33,6 @@ if __name__ == "__main__":
         img=Img().read("../board.png", size=(640, 640))
     )
 
-    game = Game(board, pieces_root, placement_csv, game_ui)
+    game = Game(board, pieces_root, placement_csv)
     game.run()
 

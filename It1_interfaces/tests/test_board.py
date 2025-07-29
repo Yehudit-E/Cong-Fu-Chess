@@ -119,3 +119,18 @@ def test_world_to_cell_with_large_pixels():
     """Test world_to_cell works with large pixel size board."""
     b = Board(100, 150, 1, 1, 8, 8, MockImg())
     assert b.world_to_cell((301, 201)) == (2, 2)  # floor division
+
+
+def test_algebraic_to_cell_invalid_input_raises():
+    """Test that invalid algebraic notation raises ValueError or IndexError."""
+    b = Board(60, 60, 1, 1, 8, 8, MockImg())
+    with pytest.raises(ValueError):
+        b.algebraic_to_cell("1a")  # wrong format
+    with pytest.raises(ValueError):
+        b.algebraic_to_cell("z9")  # invalid rank/file
+    with pytest.raises(ValueError):
+        b.algebraic_to_cell("a")  # too short
+    with pytest.raises(ValueError):
+        b.algebraic_to_cell("a9")
+    with pytest.raises(ValueError):
+        b.algebraic_to_cell("aa")

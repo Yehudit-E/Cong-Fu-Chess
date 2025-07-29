@@ -1,0 +1,11 @@
+{
+  "It1_interfaces/tests/test_main.py::test_WhenMainModuleImported_ThenGameUICreated": true,
+  "It1_interfaces/tests/test_main.py::test_WhenMainExecuted_ThenCorrectPathsUsed": true,
+  "It1_interfaces/tests/test_main.py::test_WhenMainModuleLoaded_ThenGameUIInstanceCreated": true,
+  "It1_interfaces/tests/test_main.py::test_WhenMainBlockExecuted_ThenGameIsCreatedAndRun": true,
+  "It1_interfaces/tests/test_main.py::test_WhenPathUsed_ThenCorrectPathOperations": true,
+  "It1_interfaces/tests/test_main.py::test_WhenImgUsed_ThenCorrectImageLoading": true,
+  "It1_interfaces/tests/test_main.py::test_WhenBoardCreated_ThenCorrectParameters": true,
+  "It1_interfaces/tests/test_main.py::test_WhenGameCreated_ThenCorrectParameters": true,
+  "It1_interfaces/tests/test_main.py::test_WhenFullMainWorkflow_ThenAllStepsExecuted": true
+}

@@ -5,16 +5,16 @@ import queue
 import cv2
 from typing import Dict, Tuple, Optional
 import threading
-import keyboard
 from Board import Board
 from Command import Command
 from Piece import Piece
 from img import Img
 from PieceFactory import PieceFactory
 from Bus.EventBus import event_bus
+from GameUI import GameUI
 
 class Game:
-    def __init__(self, board: Board, pieces_root: pathlib.Path, placement_csv: pathlib.Path, game_ui=None):
+    def __init__(self, board: Board, pieces_root: pathlib.Path, placement_csv: pathlib.Path):
         self.board = board
         self.user_input_queue = queue.Queue()
         self.start_time = time.monotonic()
@@ -27,12 +27,21 @@ class Game:
         self._selection_mode = "source"  # עבור משתמש ראשון
         self._selected_source: Optional[Tuple[int, int]] = None
         self.event_bus = event_bus
-        self.game_ui = game_ui
+        self.game_ui = GameUI()
 
         # --- משתנים למשתמש השני ---
         self.focus_cell2 = (self.board.H_cells - 1, 0)  # התחלה בתחתית
         self._selection_mode2 = "source"
         self._selected_source2: Optional[Tuple[int, int]] = None
+        
+        # --- משתנים לשליטה בעכבר ---
+        self.mouse_x = 0
+        self.mouse_y = 0
+        self.board_offset = (450, 100)  # מיקום הלוח על המסך
+        
+        # --- משתנים לרשת ---
+        self.my_color = None  # הצבע שלי (white/black)
+        self.network_callback = None  # פונקציה לשליחת מהלכים לרשת
         
         self._lock = threading.Lock()
         self._running = True
@@ -56,77 +65,288 @@ class Game:
     def clone_board(self) -> Board:
         return self.board.clone()
 
-    def start_keyboard_thread(self):
-        """מתחיל threads נפרדים לכל שחקן כדי לאפשר טיפול במקביל"""
+    def setup_mouse_control(self):
+        """מגדיר שליטה בעכבר במקום מקלדת"""
         
-        def exit_monitor_loop():
-            """Thread לניטור ESC - יציאה מהמשחק"""
-            while self._running:
-                time.sleep(0.1)
-                if keyboard.is_pressed('esc'):
-                    print("🚪 ESC pressed - Exiting game...")
-                    self._running = False
-                    break
+        def mouse_callback(event, x, y, flags, param):
+            """פונקציית callback לטיפול באירועי עכבר"""
+            with self._lock:
+                self.mouse_x = x
+                self.mouse_y = y
+                
+                # המרת מיקום עכבר לתא בלוח
+                board_x = x - self.board_offset[0]
+                board_y = y - self.board_offset[1]
+                
+                if (0 <= board_x < self.board.W_cells * self.board.cell_W_pix and 
+                    0 <= board_y < self.board.H_cells * self.board.cell_H_pix):
+                    
+                    cell_x = board_x // self.board.cell_W_pix
+                    cell_y = board_y // self.board.cell_H_pix
+                    new_focus = (int(cell_y), int(cell_x))
+                    
+                    # עדכון הפוקוס לשני השחקנים (העכבר שולט על שניהם)
+                    self.focus_cell = new_focus
+                    self.focus_cell2 = new_focus
+                
+                # טיפול בלחיצות עכבר
+                if event == cv2.EVENT_LBUTTONDOWN:
+                    # לחיצה שמאלית - בחירה עבור שני השחקנים
+                    self._on_mouse_left_click()
+                elif event == cv2.EVENT_RBUTTONDOWN:
+                    # לחיצה ימנית - קפיצה (jump)
+                    self._on_mouse_right_click()
         
-        def player1_keyboard_loop():
-            """Thread למשתמש הראשון - חצי מקלדת"""
-            while self._running:
-                time.sleep(0.05)
-                # --- טיפול בקלט למשתמש הראשון ---
-                dy, dx = 0, 0
-                if keyboard.is_pressed('left'):
-                    dx = -1
-                elif keyboard.is_pressed('right'):
-                    dx = 1
-                if keyboard.is_pressed('up'):
-                    dy = -1
-                elif keyboard.is_pressed('down'):
-                    dy = 1
-                if dx != 0 or dy != 0:
-                    with self._lock:  # נעילה רק לעדכון המצב
-                        h, w = self.board.H_cells, self.board.W_cells
-                        y, x = self.focus_cell
-                        self.focus_cell = ((y + dy) % h, (x + dx) % w)
-                    time.sleep(0.2)
-                if keyboard.is_pressed('enter'):
-                    self._on_enter_pressed()
-                    time.sleep(0.2)
-                if keyboard.is_pressed('right shift'):
-                    self._on_jump_pressed(player=1)
-                    time.sleep(0.2)
+        # שמירת הפונקציה לשימוש מאוחר יותר
+        self.mouse_callback = mouse_callback
+        print("🖱️ Mouse control prepared: Left click = Move (Both players), Right click = Jump")
 
-        def player2_keyboard_loop():
-            """Thread למשתמש השני - חצי מקלדת"""
-            while self._running:
-                time.sleep(0.05)
-                # --- טיפול בקלט למשתמש השני ---
-                dy2, dx2 = 0, 0
-                if keyboard.is_pressed('a'):
-                    dx2 = -1
-                elif keyboard.is_pressed('d'):
-                    dx2 = 1
-                if keyboard.is_pressed('w'):
-                    dy2 = -1
-                elif keyboard.is_pressed('s'):
-                    dy2 = 1
-                if dx2 != 0 or dy2 != 0:
-                    with self._lock:  # נעילה רק לעדכון המצב
-                        h, w = self.board.H_cells, self.board.W_cells
-                        y2, x2 = self.focus_cell2
-                        self.focus_cell2 = ((y2 + dy2) % h, (x2 + dx2) % w)
-                    time.sleep(0.2)
-                if keyboard.is_pressed('space'):
-                    self._on_space_pressed()
-                    time.sleep(0.2)
-                if keyboard.is_pressed('left shift'):
-                    self._on_jump_pressed(player=2)
-                    time.sleep(0.2)
+    def _on_mouse_left_click(self):
+        """טיפול בלחיצה שמאלית - תנועה עבור שני השחקנים"""
+        # נבדוק אם יש כלי בתא הנוכחי
+        if self.focus_cell in self.pos_to_piece:
+            piece = self.pos_to_piece[self.focus_cell]
+            piece_id = piece.get_id()
+            
+            # אם אנחנו במצב בחירת יעד, בדוק אם זו תנועה לאכילה
+            if (self._selection_mode == "dest" and self._selected_source is not None):
+                # שחקן 1 בוחר יעד - יכול להיות אכילה
+                src_cell = self._selected_source
+                dst_cell = self.focus_cell
+                src_piece = self.pos_to_piece.get(src_cell)
+                
+                # בדוק אם זה כלי של היריב (מותר לאכול)
+                if src_piece and src_piece.get_id()[1] == 'B' and piece_id[1] == 'W':
+                    # שחקן שחור אוכל כלי לבן
+                    src_alg = self.board.cell_to_algebraic(src_cell)
+                    dst_alg = self.board.cell_to_algebraic(dst_cell)
+                    cmd = Command(
+                        timestamp=self.game_time_ms(),
+                        piece_id=src_piece.get_id(),
+                        type="move",
+                        params=[src_alg, dst_alg]
+                    )
+                    self.user_input_queue.put(cmd)
+                    
+                    # שליחה לרשת
+                    self.send_move_to_network("move", src_piece.get_id(), src_alg, dst_alg)
+                    
+                    print(f"Player 1 captured {piece_id} at {dst_cell}")
+                    self._reset_selection()
+                    return
+                    
+            elif (self._selection_mode2 == "dest" and self._selected_source2 is not None):
+                # שחקן 2 בוחר יעד - יכול להיות אכילה
+                src_cell = self._selected_source2
+                dst_cell = self.focus_cell
+                src_piece = self.pos_to_piece.get(src_cell)
+                
+                # בדוק אם זה כלי של היריב (מותר לאכול)
+                if src_piece and src_piece.get_id()[1] == 'W' and piece_id[1] == 'B':
+                    # שחקן לבן אוכל כלי שחור
+                    src_alg = self.board.cell_to_algebraic(src_cell)
+                    dst_alg = self.board.cell_to_algebraic(dst_cell)
+                    cmd = Command(
+                        timestamp=self.game_time_ms(),
+                        piece_id=src_piece.get_id(),
+                        type="move",
+                        params=[src_alg, dst_alg]
+                    )
+                    self.user_input_queue.put(cmd)
+                    
+                    # שליחה לרשת
+                    self.send_move_to_network("move", src_piece.get_id(), src_alg, dst_alg)
+                    
+                    print(f"Player 2 captured {piece_id} at {dst_cell}")
+                    self._reset_selection2()
+                    return
+                    
+            # אם זה לא אכילה, נמשיך עם הלוגיקה הרגילה לבחירת כלי
+            # בדיקת הרשאה לשליטה בכלי רק אם זה לא במצב בחירת יעד
+            if ((self._selection_mode == "source" or self._selection_mode2 == "source") and 
+                not self.can_control_piece(piece_id)):
+                print("🚫 אינך יכול לשלוט בכלי הזה")
+                return
+            
+            # זיהוי סוג השחקן לפי הכלי
+            if piece_id[1] == 'B':  # שחקן 1 (שחור)
+                if self._selection_mode == "source":
+                    # בחירת כלי מקור
+                    src_alg = self.board.cell_to_algebraic(self.focus_cell)
+                    self._selected_source = self.focus_cell
+                    self._selection_mode = "dest"
+                    print(f"Player 1 selected piece at {self.focus_cell}")
+                elif self._selection_mode == "dest":
+                    # ביצוע תנועה לאותו תא (כלי משלו)
+                    if self._selected_source is None:
+                        return
+                    src_cell = self._selected_source
+                    dst_cell = self.focus_cell
+                    src_alg = self.board.cell_to_algebraic(src_cell)
+                    dst_alg = self.board.cell_to_algebraic(dst_cell)
+                    piece = self.pos_to_piece.get(src_cell)
+                    if piece:
+                        cmd = Command(
+                            timestamp=self.game_time_ms(),
+                            piece_id=piece.get_id(),
+                            type="move",
+                            params=[src_alg, dst_alg]
+                        )
+                        self.user_input_queue.put(cmd)
+                        
+                        # שליחה לרשת
+                        self.send_move_to_network("move", piece.get_id(), src_alg, dst_alg)
+                        
+                        print(f"Player 1 moved from {src_cell} to {dst_cell}")
+                    self._reset_selection()
+                    
+            elif piece_id[1] == 'W':  # שחקן 2 (לבן)
+                if self._selection_mode2 == "source":
+                    # בחירת כלי מקור
+                    src_alg = self.board.cell_to_algebraic(self.focus_cell)
+                    self._selected_source2 = self.focus_cell
+                    self._selection_mode2 = "dest"
+                    print(f"Player 2 selected piece at {self.focus_cell}")
+                elif self._selection_mode2 == "dest":
+                    # ביצוע תנועה לאותו תא (כלי משלו)
+                    if self._selected_source2 is None:
+                        return
+                    src_cell = self._selected_source2
+                    dst_cell = self.focus_cell
+                    src_alg = self.board.cell_to_algebraic(src_cell)
+                    dst_alg = self.board.cell_to_algebraic(dst_cell)
+                    piece = self.pos_to_piece.get(src_cell)
+                    if piece:
+                        cmd = Command(
+                            timestamp=self.game_time_ms(),
+                            piece_id=piece.get_id(),
+                            type="move",
+                            params=[src_alg, dst_alg]
+                        )
+                        self.user_input_queue.put(cmd)
+                        
+                        # שליחה לרשת
+                        self.send_move_to_network("move", piece.get_id(), src_alg, dst_alg)
+                        
+                        print(f"Player 2 moved from {src_cell} to {dst_cell}")
+                    self._reset_selection2()
+        else:
+            # אם אין כלי בתא הנוכחי, זה יכול להיות יעד לתנועה
+            # בודקים אם אחד השחקנים בבחירת יעד
+            if self._selection_mode == "dest" and self._selected_source is not None:
+                # שחקן 1 בוחר יעד
+                src_cell = self._selected_source
+                dst_cell = self.focus_cell
+                src_alg = self.board.cell_to_algebraic(src_cell)
+                dst_alg = self.board.cell_to_algebraic(dst_cell)
+                piece = self.pos_to_piece.get(src_cell)
+                if piece:
+                    cmd = Command(
+                        timestamp=self.game_time_ms(),
+                        piece_id=piece.get_id(),
+                        type="move",
+                        params=[src_alg, dst_alg]
+                    )
+                    self.user_input_queue.put(cmd)
+                    
+                    # שליחה לרשת
+                    self.send_move_to_network("move", piece.get_id(), src_alg, dst_alg)
+                    
+                    print(f"Player 1 moved from {src_cell} to {dst_cell}")
+                self._reset_selection()
+                
+            elif self._selection_mode2 == "dest" and self._selected_source2 is not None:
+                # שחקן 2 בוחר יעד
+                src_cell = self._selected_source2
+                dst_cell = self.focus_cell
+                src_alg = self.board.cell_to_algebraic(src_cell)
+                dst_alg = self.board.cell_to_algebraic(dst_cell)
+                piece = self.pos_to_piece.get(src_cell)
+                if piece:
+                    cmd = Command(
+                        timestamp=self.game_time_ms(),
+                        piece_id=piece.get_id(),
+                        type="move",
+                        params=[src_alg, dst_alg]
+                    )
+                    self.user_input_queue.put(cmd)
+                    
+                    # שליחה לרשת
+                    self.send_move_to_network("move", piece.get_id(), src_alg, dst_alg)
+                    
+                    print(f"Player 2 moved from {src_cell} to {dst_cell}")
+                self._reset_selection2()
 
-        # יצירת threads נפרדים
-        threading.Thread(target=exit_monitor_loop, daemon=True, name="Exit_Monitor").start()
-        threading.Thread(target=player1_keyboard_loop, daemon=True, name="Player1_Keyboard").start()
-        threading.Thread(target=player2_keyboard_loop, daemon=True, name="Player2_Keyboard").start()
-        print("🎮 Started separate keyboard threads: Exit Monitor + Player1 + Player2")
+    def _on_mouse_right_click(self):
+        """טיפול בלחיצה ימנית - קפיצה (jump) עבור שני השחקנים"""
+        if self.focus_cell in self.pos_to_piece:
+            piece = self.pos_to_piece[self.focus_cell]
+            piece_id = piece.get_id()
+            
+            # בדיקת הרשאה לשליטה בכלי
+            if not self.can_control_piece(piece_id):
+                print("🚫 אינך יכול לשלוט בכלי הזה")
+                return
+            
+            src_alg = self.board.cell_to_algebraic(self.focus_cell)
+            cmd = Command(
+                timestamp=self.game_time_ms(),
+                piece_id=piece_id,
+                type="jump",
+                params=[src_alg, src_alg]
+            )
+            self.user_input_queue.put(cmd)
+            
+            # שליחה לרשת
+            self.send_move_to_network("jump", piece_id, src_alg)
+            
+            # זיהוי השחקן לפי הכלי
+            if piece_id[1] == 'B':
+                print(f"Player 1 jumped with piece at {self.focus_cell}")
+            elif piece_id[1] == 'W':
+                print(f"Player 2 jumped with piece at {self.focus_cell}")
+            else:
+                print(f"Jumped with piece at {self.focus_cell}")
+
+    def _on_mouse_middle_click(self):
+        """טיפול בלחיצה אמצעית - קפיצה (jump) - לא בשימוש יותר, קפיצה עברה ללחיצה ימנית"""
+        # קפיצה עבור שחקן 1 אם הכלי שייך לו
+        if self.focus_cell in self.pos_to_piece:
+            piece = self.pos_to_piece[self.focus_cell]
+            
+            # בדיקת הרשאה לשליטה בכלי
+            if not self.can_control_piece(piece.get_id()):
+                print("🚫 אינך יכול לשלוט בכלי הזה")
+                return
+            
+            if piece.get_id()[1] == 'B':  # שחקן 1
+                src_alg = self.board.cell_to_algebraic(self.focus_cell)
+                cmd = Command(
+                    timestamp=self.game_time_ms(),
+                    piece_id=piece.get_id(),
+                    type="jump",
+                    params=[src_alg, src_alg]
+                )
+                self.user_input_queue.put(cmd)
+                
+                # שליחה לרשת
+                self.send_move_to_network("jump", piece.get_id(), src_alg)
+                
+                print(f"Player 1 jumped with piece at {self.focus_cell}")
+            elif piece.get_id()[1] == 'W':  # שחקן 2
+                src_alg = self.board.cell_to_algebraic(self.focus_cell)
+                cmd = Command(
+                    timestamp=self.game_time_ms(),
+                    piece_id=piece.get_id(),
+                    type="jump",
+                    params=[src_alg, src_alg]
+                )
+                self.user_input_queue.put(cmd)
+                
+                # שליחה לרשת
+                self.send_move_to_network("jump", piece.get_id(), src_alg)
+                
+                print(f"Player 2 jumped with piece at {self.focus_cell}")
 
     def _on_jump_pressed(self, player: int):
         with self._lock:  # הגנה מפני race conditions
@@ -239,7 +459,6 @@ class Game:
     #     cv2.destroyAllWindows()
 
     def run(self):
-        self.start_keyboard_thread()
         background_width = 1530
         background_height = 850
     # טען את תמונת הרקע וודא שהיא בגודל הנכון
@@ -248,6 +467,10 @@ class Game:
         # --- רקע ---
         # background = Img().read("../background.png")
         board_offset = (450, 100)
+        self.board_offset = board_offset  # עדכון המיקום לשימוש בעכבר
+        
+        # הגדרת שליטה בעכבר
+        self.setup_mouse_control()
         
         # שליחת אירוע תחילת המשחק
         self.event_bus.publish("game_start", {"message": "Game is starting!"})
@@ -284,7 +507,19 @@ class Game:
                 self.game_ui.draw_all_ui(frame)
 
             cv2.imshow("Kong Fu Chess", frame.img)
-            cv2.waitKey(1)
+            
+            # הגדרת mouse callback בפעם הראשונה שהחלון נוצר
+            if hasattr(self, 'mouse_callback') and not hasattr(self, '_mouse_callback_set'):
+                cv2.setMouseCallback("Kong Fu Chess", self.mouse_callback)
+                self._mouse_callback_set = True
+                print("🖱️ Mouse control activated!")
+            
+            # בדיקת ESC ליציאה מהמשחק
+            key = cv2.waitKey(1) & 0xFF
+            if key == 27:  # ESC key
+                print("🚪 ESC pressed - Exiting game...")
+                self._running = False
+                break
 
         # שליחת הודעת סיום ומתן זמן להציגה
         self._send_end_message()
@@ -581,3 +816,102 @@ class Game:
     def _reset_selection2(self):
         self._selection_mode2 = "source"
         self._selected_source2 = None
+
+    # --- פונקציות רשת ---
+    
+    def set_player_color(self, color: str):
+        """קובע את הצבע של השחקן הנוכחי"""
+        self.my_color = color
+        print(f"🎨 הצבע שלי: {color}")
+        
+        # הגבלת שליטה רק לצבע שלי
+        if color == "white":
+            print("🎮 אתה שולט על הכלים הלבנים (לחיצה ימנית)")
+        else:
+            print("🎮 אתה שולט על הכלים השחורים (לחיצה שמאלית)")
+
+    def set_network_callback(self, callback):
+        """קובע פונקציה לשליחת מהלכים לרשת"""
+        self.network_callback = callback
+
+    def apply_server_update(self, update_data):
+        """מטפל בעדכון מהשרת"""
+        try:
+            board_state = update_data.get("board", {})
+            print(f"🔄 מעדכן לוח מהשרת: {board_state}")
+            # כאן יכול להיות לוגיקה לעדכון הלוח
+        except Exception as e:
+            print(f"❌ שגיאה בעדכון מהשרת: {e}")
+
+    def apply_opponent_move(self, move_data):
+        """מטפל במהלך של היריב"""
+        try:
+            action = move_data.get("action")
+            if action == "move":
+                from_pos = move_data.get("from")
+                to_pos = move_data.get("to")
+                piece_id = move_data.get("piece")
+                
+                print(f"🎯 יריב הזיז: {piece_id} מ-{from_pos} ל-{to_pos}")
+                
+                # יצירת פקודה ממהלך היריב
+                cmd = Command(
+                    timestamp=self.game_time_ms(),
+                    piece_id=piece_id,
+                    type="move",
+                    params=[from_pos, to_pos]
+                )
+                self.user_input_queue.put(cmd)
+                
+            elif action == "jump":
+                piece_id = move_data.get("piece")
+                pos = move_data.get("position")
+                
+                print(f"🦘 יריב קפץ: {piece_id} ב-{pos}")
+                
+                cmd = Command(
+                    timestamp=self.game_time_ms(),
+                    piece_id=piece_id,
+                    type="jump",
+                    params=[pos, pos]
+                )
+                self.user_input_queue.put(cmd)
+                
+        except Exception as e:
+            print(f"❌ שגיאה ביישום מהלך יריב: {e}")
+
+    def send_move_to_network(self, action: str, piece_id: str, from_pos: str = None, to_pos: str = None):
+        """שולח מהלך לרשת"""
+        if not self.network_callback:
+            print("⚠️ אין חיבור רשת - המהלך יתבצע רק מקומית")
+            return
+            
+        move_data = {
+            "action": action,
+            "piece": piece_id,
+            "player_color": self.my_color
+        }
+        
+        if action == "move" and from_pos and to_pos:
+            move_data["from"] = from_pos
+            move_data["to"] = to_pos
+            print(f"📤 שולח מהלך לרשת: {piece_id} מ-{from_pos} ל-{to_pos}")
+        elif action == "jump" and from_pos:
+            move_data["position"] = from_pos
+            print(f"📤 שולח קפיצה לרשת: {piece_id} ב-{from_pos}")
+            
+        self.network_callback(move_data)
+
+    def can_control_piece(self, piece_id: str) -> bool:
+        """בודק אם השחקן יכול לשלוט בכלי הזה"""
+        if not self.my_color:
+            return True  # אם אין הגבלת רשת, מותר הכל
+            
+        piece_color = piece_id[1] if len(piece_id) > 1 else None
+        
+        if self.my_color == "white":
+            return piece_color == 'W'
+        elif self.my_color == "black":
+            return piece_color == 'B'
+            
+        return False
