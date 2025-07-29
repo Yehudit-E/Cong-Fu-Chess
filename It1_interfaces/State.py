@@ -31,7 +31,7 @@ class State:
     def process_command(self, cmd: Command, now_ms: int) -> "State":
         next_state = self.transitions.get(cmd.type)
         if next_state is None:
-            return self  # stay in current state
+            return self 
         next_state.reset(cmd)
         return next_state
 

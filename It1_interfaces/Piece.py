@@ -6,10 +6,11 @@ from typing import Dict, Optional, Tuple
 import cv2
 
 class Piece:
+    nextCode = 0
     def __init__(self, piece_id: str, init_state: State , start_ms: int = 0):
         self._id = piece_id
         self._state = init_state
-        self._current_cmd: Optional[Command] = None    
+        self._current_cmd: Optional[Command] = None
 
 
     def on_command(self, cmd: Command, now_ms: int , pos_to_piece: Dict[Tuple[int, int], "Piece"]):
@@ -80,9 +81,6 @@ class Piece:
 
     def get_id(self):
         return self._id
-
-    def get_unique(self):
-        return self._uniqueNumber
 
     def get_command(self):
         return self._state.get_command()

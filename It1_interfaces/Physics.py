@@ -198,10 +198,10 @@ from weakref import finalize
 
 from Command import Command
 from Board import Board
-
+from Bus.EventBus import EventBus
 
 class Physics(ABC):
-    def __init__(self, start_cell: Tuple[int, int], board: Board, speed_m_s: float = 1.0):
+    def __init__(self, start_cell: Tuple[int, int], board: Board, speed_m_s: float = 1.0 , event_bus: EventBus = None):
         self.start_cell = start_cell
         self.board = board
         self.speed = speed_m_s * 100
@@ -210,6 +210,7 @@ class Physics(ABC):
         self.start_time = 0
         self.cmd = None
         self.finished = False
+        self.event_bus = event_bus
 
     @abstractmethod
     def reset(self, cmd: Command):
@@ -268,8 +269,8 @@ from Physics import Physics
 
 
 class MovePhysics(Physics):
-    def __init__(self, start_cell: Tuple[int, int], board: Board, speed_m_s: float = 1.0):
-        super().__init__(start_cell, board, speed_m_s)
+    def __init__(self, start_cell: Tuple[int, int], board: Board, speed_m_s: float = 1.0, event_bus: EventBus = None):
+        super().__init__(start_cell, board, speed_m_s,event_bus)
         self.start_pos = self.board.cell_to_world(start_cell)
         self.end_pos = self.start_pos
         self.end_cell = start_cell
@@ -292,6 +293,7 @@ class MovePhysics(Physics):
         self.duration_ms = max(1, int((dist / self.speed) * 1000))
         # סך כל הזמן כולל העיכוב לאחר התנועה
         self.total_duration_ms = self.duration_ms + self.extra_delay_ms
+        self.event_bus.publish("piece_command", {"time": self.start_time, "piece": cmd.piece_id, "description": f"move from {cmd.params[0]} to {cmd.params[1]}"})
         self.start_time = None
 
     def update(self, now_ms: int) -> Command:
@@ -350,14 +352,16 @@ class MovePhysics(Physics):
 
 class JumpPhysics(Physics):
     def reset(self, cmd: Command):
+
         super().reset(cmd)
         self.jump_duration = 1500  # 1 sec jump duration
-        self.start_time = None
         self.start_cell = self.board.algebraic_to_cell(cmd.params[0])
         self.end_cell = self.board.algebraic_to_cell(cmd.params[1])
         self.start_pos = self.board.cell_to_world(self.start_cell)
         self.end_pos = self.board.cell_to_world(self.end_cell)
         self.pos = self.start_pos  # התחלה בקואורדינטה התחלתית
+        self.event_bus.publish("piece_command", {"time": self.start_time, "piece": cmd.piece_id, "description": f"jump"})
+        self.start_time = None
 
     def update(self, now_ms: int) -> Command:
         if self.start_time is None:

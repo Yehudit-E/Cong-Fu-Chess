@@ -11,13 +11,14 @@ from Command import Command
 from Piece import Piece
 from img import Img
 from PieceFactory import PieceFactory
+from Bus.EventBus import EventBus
 
 class Game:
-    def __init__(self, board: Board, pieces_root: pathlib.Path, placement_csv: pathlib.Path):
+    def __init__(self, board: Board, pieces_root: pathlib.Path, placement_csv: pathlib.Path, event_bus: EventBus):
         self.board = board
         self.user_input_queue = queue.Queue()
         self.start_time = time.monotonic()
-        self.piece_factory = PieceFactory(board, pieces_root)
+        self.piece_factory = PieceFactory(board, pieces_root, event_bus)
         self.pieces: Dict[str, Piece] = {}
         self.pos_to_piece: Dict[Tuple[int, int], Piece] = {}
         self._current_board = None
@@ -25,6 +26,7 @@ class Game:
         self.focus_cell = (0, 0)
         self._selection_mode = "source"  # עבור משתמש ראשון
         self._selected_source: Optional[Tuple[int, int]] = None
+        self.event_bus = event_bus
 
         # --- משתנים למשתמש השני ---
         self.focus_cell2 = (self.board.H_cells - 1, 0)  # התחלה בתחתית
@@ -138,23 +140,26 @@ class Game:
                 )
                 self.user_input_queue.put(cmd)
 
-    def _wait_for_enter(self, message: str):
-        img = Img()
-        img.img = self.board.img.img.copy()
+    def _wait_for_enter(self, message: str, background: Optional[Img] = None):
+        if background:
+            img = Img()
+            img.img = background.img.copy()
+        else:
+            img = Img()
+            img.img = self.board.img.img.copy()
 
         lines = message.split('\n')
         font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 1.4  # אפשר להקטין פה את הגודל
+        font_scale = 1.4
         thickness = 2
         color = (0, 0, 255, 255)
 
-        # נקודת התחלה אנכית למרכז הטקסט
         total_height = 0
         line_sizes = []
         for line in lines:
             (w, h), _ = cv2.getTextSize(line, font, font_scale, thickness)
             line_sizes.append((w, h))
-            total_height += h + 10  # 10 פיקסלים מרווח בין שורות
+            total_height += h + 10
 
         y0 = (img.img.shape[0] - total_height) // 2
 
@@ -175,11 +180,51 @@ class Game:
         cv2.destroyAllWindows()
 
 
-    def run(self):
 
-        self._wait_for_enter("Press ENTER\n to start the game")
-        # אתחול ת'ראד הקלט
+    # def run(self):
+
+    #     self._wait_for_enter("Press ENTER\n to start the game")
+    #     # אתחול ת'ראד הקלט
+    #     self.start_keyboard_thread()
+
+    #     start_ms = self.game_time_ms()
+    #     for piece in self.pieces.values():
+    #         piece.reset(start_ms)
+
+    #     while self._running and not self._is_win():
+    #         now = self.game_time_ms()
+
+    #         # עדכון הכלים
+    #         for piece in self.pieces.values():
+    #             piece.update(now , self.pos_to_piece)
+
+    #         # עידכון המפה של המיקומים
+    #         self._update_position_mapping()
+
+    #         # טיפול בפקודות המתינות בתור
+    #         while not self.user_input_queue.empty():
+    #             cmd = self.user_input_queue.get()
+    #             cell = self.board.algebraic_to_cell(cmd.params[0])
+    #             if cell in self.pos_to_piece:
+    #                 self.pos_to_piece[cell].on_command(cmd, now,self.pos_to_piece)
+
+    #         self._draw()
+
+    #         cv2.imshow("Chess", self._current_board.img.img)
+    #         # שימוש ב-waitKey קצר לצורך צביעת החלון בלבד
+    #         cv2.waitKey(1)
+
+    #     self._announce_win()
+    #     self._running = False
+    #     cv2.destroyAllWindows()
+
+    def run(self):
         self.start_keyboard_thread()
+
+        # --- רקע ---
+        background = Img().read("../background.png")
+        board_offset = (450, 100)
+        self._wait_for_enter("Press ENTER\n to start the game",background)
 
         start_ms = self.game_time_ms()
         for piece in self.pieces.values():
@@ -188,29 +233,31 @@ class Game:
         while self._running and not self._is_win():
             now = self.game_time_ms()
 
-            # עדכון הכלים
             for piece in self.pieces.values():
                 piece.update(now , self.pos_to_piece)
 
-            # עידכון המפה של המיקומים
             self._update_position_mapping()
 
-            # טיפול בפקודות המתינות בתור
             while not self.user_input_queue.empty():
                 cmd = self.user_input_queue.get()
                 cell = self.board.algebraic_to_cell(cmd.params[0])
                 if cell in self.pos_to_piece:
-                    self.pos_to_piece[cell].on_command(cmd, now,self.pos_to_piece)
+                     self.pos_to_piece[cell].on_command(cmd, now, self.pos_to_piece)
 
             self._draw()
 
-            cv2.imshow("Chess", self._current_board.img.img)
-            # שימוש ב-waitKey קצר לצורך צביעת החלון בלבד
+            # יצירת תמונת מסך חדשה כל פריים
+            frame = Img()
+            frame.img = background.img.copy()
+            self._current_board.img.draw_on(frame, *board_offset)
+
+            cv2.imshow("Chess", frame.img)
             cv2.waitKey(1)
 
         self._announce_win()
         self._running = False
         cv2.destroyAllWindows()
+
 
     def _update_position_mapping(self):
         self.pos_to_piece.clear()
@@ -243,7 +290,9 @@ class Game:
                 self.pos_to_piece[pos] = piece
 
         for k in to_remove:
+            self.event_bus.publish("piece_captured", {"piece": k})
             self.pieces.pop(k, None)  # pop עם None כדי למנוע שגיאת KeyError
+
 
 
     def _draw(self):
